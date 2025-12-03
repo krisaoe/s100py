@@ -19,9 +19,11 @@ else:
     pass
     # print("running as script")
 
+import argparse
+import datetime
 import logging
 import warnings
-import argparse
+from typing import Any, Dict, Mapping, Optional, Union
 from xml.etree import ElementTree as et
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -39,6 +41,396 @@ except:
         print("matplotlib.pyplot failed to import, plotting will not work")
 
 from s100py.s102.v3_0.api import DEPTH, UNCERTAINTY, S102File, S102Exception
+from ...s1xx import s1xx_sequence
+
+
+Number = Union[int, float]
+ArrayLike = Union[numpy.ndarray, s1xx_sequence]
+MetadataMapping = Mapping[str, Any]
+GridProps = Mapping[str, Number]
+
+
+def create_s102(
+    output_path: str,
+    data_coding_format: int = 2,
+    mode: str = "x",
+) -> S102File:
+    """
+    Create S-102 v3.0.0 file.
+
+    Parameters
+    ----------
+    output_path : str
+        Path to the HDF5 file to create.
+    data_coding_format : int
+        Data coding format (DCF). Common values are:
+          2 -> regular grid,
+          9 -> other grid form / TIN (confirm with S-102 3.0.0 spec).
+    mode : str
+        File mode to pass to S102File ('x' create, 'w' overwrite, etc.)
+
+    Returns
+    -------
+    S102File
+        Open S-102 file object.
+    """
+    if data_coding_format != 2:
+        raise S102Exception(f"S102 only supports data_coding_format=2 (regular grid), got {data_coding_format}")
+
+    data_file = S102File(output_path, mode)
+    data_file.set_defaults(overwrite=True)
+
+    return data_file
+
+
+def add_metadata(
+    metadata: MetadataMapping,
+    data_file: S102File,
+) -> S102File:
+    """
+    Populate root / Group_F metadata for an S-102 v3.0.0 dataset.
+
+    `metadata` is a pythonic dict of values; this function maps them to
+    S102Root + Group_F attributes.
+
+    Typical metadata keys you might support (align with S-102 3.0.0):
+
+      - horizontalCRS  (EPSG integer)
+      - verticalCS
+      - verticalDatumReference
+      - verticalCoordinateBase
+      - verticalDatum
+      - epoch
+      - verticalDatumEpoch
+      - dataDynamicity
+      - issueDateTime
+      - geographicIdentifier
+      - datasetID, editionNumber, updateNumber
+      - depthUncertainty, horizontalPositionUncertainty, verticalUncertainty
+      - datasetDeliveryInterval, timeUncertainty
+      - producingAgency, etc.
+
+    This is analogous to s104.utils.add_metadata().
+    """
+    root = data_file.root
+
+    # --- horizontal / vertical reference frames ---
+    if "horizontalCRS" in metadata and hasattr(root, "horizontal_crs"):
+        root.horizontal_crs = int(metadata["horizontalCRS"])
+
+    if "verticalCS" in metadata and hasattr(root, "vertical_cs"):
+        root.vertical_cs = int(metadata["verticalCS"])
+
+    if "verticalDatumReference" in metadata and hasattr(root, "vertical_datum_reference"):
+        root.vertical_datum_reference = int(metadata["verticalDatumReference"])
+
+    if "verticalCoordinateBase" in metadata and hasattr(root, "vertical_coordinate_base"):
+        root.vertical_coordinate_base = int(metadata["verticalCoordinateBase"])
+
+    if "verticalDatum" in metadata and hasattr(root, "vertical_datum"):
+        root.vertical_datum = int(metadata["verticalDatum"])
+
+    if "epoch" in metadata and hasattr(root, "epoch"):
+        root.epoch = str(metadata["epoch"])
+
+    if "verticalDatumEpoch" in metadata and hasattr(root, "vertical_datum_epoch"):
+        root.vertical_datum_epoch = str(metadata["verticalDatumEpoch"])
+
+    # --- identification / edition ---
+    if "datasetID" in metadata and hasattr(root, "dataset_id"):
+        root.dataset_id = str(metadata["datasetID"])
+
+    if "editionNumber" in metadata and hasattr(root, "edition_number"):
+        root.edition_number = int(metadata["editionNumber"])
+
+    if "updateNumber" in metadata and hasattr(root, "update_number"):
+        root.update_number = int(metadata["updateNumber"])
+
+    if "geographicIdentifier" in metadata and hasattr(root, "geographic_identifier"):
+        root.geographic_identifier = str(metadata["geographicIdentifier"])
+
+    # --- time / dynamicity ---
+    if "dataDynamicity" in metadata and hasattr(root, "data_dynamicity"):
+        root.data_dynamicity = int(metadata["dataDynamicity"])
+
+    if "issueDateTime" in metadata and hasattr(root, "issue_date_time"):
+        val = metadata["issueDateTime"]
+        if isinstance(val, datetime.datetime):
+            root.issue_date_time = val
+        else:
+            # accept ISO 8601 string, etc.
+            root.issue_date_time = datetime.datetime.fromisoformat(str(val))
+
+    if "datasetDeliveryInterval" in metadata and hasattr(root, "dataset_delivery_interval"):
+        root.dataset_delivery_interval = str(metadata["datasetDeliveryInterval"])
+
+    if "timeUncertainty" in metadata and hasattr(root, "time_uncertainty"):
+        root.time_uncertainty = float(metadata["timeUncertainty"])
+
+    # --- uncertainties (often Group_F / Feature Attribute Table) ---
+    group_f = getattr(root, "group_f", None)
+    if group_f is not None:
+        # This assumes your Group_F has feature attribute records where
+        # you can set default uncertainty values. How you do that will
+        # depend on the v3.0.0 FC and the generated classes.
+        if "depthUncertainty" in metadata and hasattr(group_f, "default_depth_uncertainty"):
+            group_f.default_depth_uncertainty = float(metadata["depthUncertainty"])
+        if "horizontalPositionUncertainty" in metadata and hasattr(
+            group_f, "default_horizontal_position_uncertainty"
+        ):
+            group_f.default_horizontal_position_uncertainty = float(
+                metadata["horizontalPositionUncertainty"]
+            )
+        if "verticalUncertainty" in metadata and hasattr(group_f, "default_vertical_uncertainty"):
+            group_f.default_vertical_uncertainty = float(metadata["verticalUncertainty"])
+
+    # You can also wire in producingAgency etc. here when you know the exact names.
+    return data_file
+
+
+
+def add_bathymetry_instance(
+    data_file: S102File,
+    data_coding_format: int = 2,
+) -> S102File:
+    """
+    Ensure that a BathymetryCoverage instance (and its group) exist.
+
+    This is the S-102 analogue of s104.add_water_level_instance().
+
+    - Creates root.bathymetry_coverage if needed.
+    - Ensures there is at least one BathymetryCoverage feature instance.
+    - Ensures that instance has at least one BathymetryGroup for DCF2.
+    """
+    if data_coding_format != 2:
+        raise S102Exception(f"S102 only supports data_coding_format=2 (regular grid), got {data_coding_format}")
+
+    root = data_file.root
+
+    container = getattr(root, "bathymetry_coverage", None)
+    if container is None:
+        raise S102Exception(
+            "root.bathymetry_coverage is not initialised; "
+            "check S102Root API or create via create_s102()."
+        )
+
+    # --- Instance list ---
+    instances = getattr(container, "bathymetry_coverage", None)
+    if instances is None:
+        raise S102Exception(
+            "container.bathymetry_coverage list missing; "
+            "check S102 API generation."
+        )
+
+    if len(instances) == 0:
+        instance = instances.append_new_item()
+    else:
+        instance = instances[0]
+
+    groups = getattr(instance, "bathymetry_group", None)
+    if groups is None:
+        raise S102Exception(
+            "instance.bathymetry_group list missing; "
+            "check S102 API generation."
+        )
+
+    if len(groups) == 0:
+        groups.append_new_item()
+
+    return data_file
+
+
+def add_data_from_arrays(
+    depth: ArrayLike,
+    uncertainty: ArrayLike,
+    grid_properties: Dict[str, Number],
+    data_file: S102File,
+    nodata_value: Optional[Number] = None,
+    z_positive_down: bool = True,
+) -> S102File:
+    """
+    Insert depth + uncertainty arrays into an S-102 v2.2.0 dataset (DCF2),
+    and update the BathymetryCoverage instance geometry.
+
+    depth, uncertainty:
+        2D numpy arrays with identical shape [ny, nx].
+
+    grid_properties:
+        {
+          "minx": westBound (x),
+          "maxx": eastBound (x),
+          "miny": southBound (y),
+          "maxy": northBound (y),
+          "cellsize_x": dx,
+          "cellsize_y": dy,
+          "nx": number of columns,
+          "ny": number of rows,
+        }
+    """
+    if depth.shape != uncertainty.shape:
+        raise S102Exception(
+            f"Depth and uncertainty arrays must have the same shape, "
+            f"got {depth.shape!r} and {uncertainty.shape!r}"
+        )
+
+    ny, nx = depth.shape
+    if int(grid_properties["nx"]) != nx or int(grid_properties["ny"]) != ny:
+        raise S102Exception(
+            "Grid properties (nx, ny) do not match array shape: "
+            f"({grid_properties['nx']}, {grid_properties['ny']}) vs {depth.shape}"
+        )
+
+    depth_arr = numpy.array(depth, dtype="float32", copy=True)
+    uncert_arr = numpy.array(uncertainty, dtype="float32", copy=True)
+
+    if not z_positive_down:
+        depth_arr *= -1.0
+
+    if nodata_value is not None:
+        nodata = numpy.float32(nodata_value)
+        depth_arr = numpy.where(numpy.isnan(depth_arr), nodata, depth_arr)
+        uncert_arr = numpy.where(numpy.isnan(uncert_arr), nodata, uncert_arr)
+
+    minx = float(grid_properties["minx"])
+    maxx = float(grid_properties["maxx"])
+    miny = float(grid_properties["miny"])
+    maxy = float(grid_properties["maxy"])
+    dx = float(grid_properties["cellsize_x"])
+    dy = float(grid_properties["cellsize_y"])
+
+    root = data_file.root
+
+    # --- Navigate to instance + group ---
+    container = root.bathymetry_coverage
+    instances = container.bathymetry_coverage
+    if not instances:
+        raise S102Exception(
+            "No BathymetryCoverage instances present; "
+            "call add_bathymetry_instance() first."
+        )
+    instance = instances[0]
+
+    groups = instance.bathymetry_group
+    if not groups:
+        raise S102Exception(
+            "No BathymetryGroup present; call add_bathymetry_instance() first."
+        )
+    group = groups[0]
+
+    # --- Instance-level geometry (DCF2) ---
+    # Names here are based on the public S-102 examples; adjust to your API.
+    instance.grid_origin_longitude = minx
+    instance.grid_origin_latitude = miny
+    instance.grid_spacing_longitudinal = dx
+    instance.grid_spacing_latitudinal = dy
+
+    instance.num_points_longitudinal = nx
+    instance.num_points_latitudinal = ny
+
+    instance.west_bound_longitude = minx
+    instance.east_bound_longitude = maxx
+    instance.south_bound_latitude = miny
+    instance.north_bound_latitude = maxy
+
+    # If the group has its own extents/size, mirror them there too:
+    if hasattr(group, "num_points_longitudinal"):
+        group.num_points_longitudinal = nx
+    if hasattr(group, "num_points_latitudinal"):
+        group.num_points_latitudinal = ny
+
+    # --- Write arrays via S102File convenience accessors ---
+    data_file.depth[:] = depth_arr
+    data_file.uncertainty[:] = uncert_arr
+
+    if nodata_value is not None:
+        if hasattr(data_file.depth, "no_data_value"):
+            data_file.depth.no_data_value = numpy.float32(nodata_value)
+        if hasattr(data_file.uncertainty, "no_data_value"):
+            data_file.uncertainty.no_data_value = numpy.float32(nodata_value)
+
+    return data_file
+
+
+def update_metadata(
+    data_file: S102File,
+    grid_properties: GridProps,
+    metadata: Optional[MetadataMapping] = None,
+    depth: Optional[ArrayLike] = None,
+) -> S102File:
+    """
+    Update root-level metadata that depends on the actual coverage:
+
+      - west/east/south/north bounds (from grid_properties)
+      - minimumDepth/maximumDepth (from depth array if provided, or from file)
+      - optional overrides from metadata dict
+
+    This is analogous to s104.utils.update_metadata().
+    """
+    root = data_file.root
+
+    minx = float(grid_properties["minx"])
+    maxx = float(grid_properties["maxx"])
+    miny = float(grid_properties["miny"])
+    maxy = float(grid_properties["maxy"])
+
+    # horizontal extents at root
+    if hasattr(root, "west_bound_longitude"):
+        root.west_bound_longitude = minx
+    if hasattr(root, "east_bound_longitude"):
+        root.east_bound_longitude = maxx
+    if hasattr(root, "south_bound_latitude"):
+        root.south_bound_latitude = miny
+    if hasattr(root, "north_bound_latitude"):
+        root.north_bound_latitude = maxy
+
+    # vertical extents from depth values
+    if depth is None:
+        try:
+            depth = numpy.array(data_file.depth[:], dtype="float32")
+        except Exception:
+            depth = None
+
+    if depth is not None:
+        depth_arr = numpy.array(depth, dtype="float32", copy=False)
+        finite = numpy.isfinite(depth_arr)
+        if numpy.any(finite):
+            min_z = float(depth_arr[finite].min())
+            max_z = float(depth_arr[finite].max())
+
+            if hasattr(root, "minimum_depth"):
+                root.minimum_depth = min_z
+            if hasattr(root, "maximum_depth"):
+                root.maximum_depth = max_z
+
+    # Optional explicit overrides from metadata
+    if metadata is not None:
+        if "minimumDepth" in metadata and hasattr(root, "minimum_depth"):
+            root.minimum_depth = float(metadata["minimumDepth"])
+        if "maximumDepth" in metadata and hasattr(root, "maximum_depth"):
+            root.maximum_depth = float(metadata["maximumDepth"])
+
+        if "westBoundLongitude" in metadata and hasattr(root, "west_bound_longitude"):
+            root.west_bound_longitude = float(metadata["westBoundLongitude"])
+        if "eastBoundLongitude" in metadata and hasattr(root, "east_bound_longitude"):
+            root.east_bound_longitude = float(metadata["eastBoundLongitude"])
+        if "southBoundLatitude" in metadata and hasattr(root, "south_bound_latitude"):
+            root.south_bound_latitude = float(metadata["southBoundLatitude"])
+        if "northBoundLatitude" in metadata and hasattr(root, "north_bound_latitude"):
+            root.north_bound_latitude = float(metadata["northBoundLatitude"])
+
+    return data_file
+
+
+def write_data_file(data_file: S102File) -> None:
+    """
+    Write and close an S-102 v3.0.0 file.
+
+    Mirrors s104.utils.write_data_file().
+    """
+    data_file.write()
+    data_file.close()
+
+
 
 __all__ = ['plot_depth_using_h5py', 'create_s102', 'from_arrays', 'from_arrays_with_metadata',
            'from_gdal', 'from_bag', 'get_valid_epsg', 'to_geotiff']
@@ -135,7 +527,6 @@ def to_geotiff(input_path, output_path):
     s102_data.to_geotiff(output_path)
 
 
-create_s102 = S102File.create_s102
 from_arrays = S102File.from_arrays
 from_arrays_with_metadata = S102File.from_arrays_with_metadata
 from_gdal = S102File.from_raster
