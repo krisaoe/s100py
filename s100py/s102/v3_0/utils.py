@@ -50,11 +50,7 @@ MetadataMapping = Mapping[str, Any]
 GridProps = Mapping[str, Number]
 
 
-def create_s102(
-    output_path: str,
-    data_coding_format: int = 2,
-    mode: str = "x",
-) -> S102File:
+def create_s102(output_path: str, data_coding_format: int = 2) -> S102File:
     """
     Create S-102 v3.0.0 file.
 
@@ -63,11 +59,7 @@ def create_s102(
     output_path : str
         Path to the HDF5 file to create.
     data_coding_format : int
-        Data coding format (DCF). Common values are:
-          2 -> regular grid,
-          9 -> other grid form / TIN (confirm with S-102 3.0.0 spec).
-    mode : str
-        File mode to pass to S102File ('x' create, 'w' overwrite, etc.)
+        Data coding format (DCF). Must be 2 (regular grid) for S-102.
 
     Returns
     -------
@@ -77,10 +69,7 @@ def create_s102(
     if data_coding_format != 2:
         raise S102Exception(f"S102 only supports data_coding_format=2 (regular grid), got {data_coding_format}")
 
-    data_file = S102File(output_path, mode)
-    data_file.set_defaults(overwrite=True)
-
-    return data_file
+    return S102File.create_s102(output_path)
 
 
 def add_metadata(
