@@ -231,21 +231,20 @@ def add_bathymetry_instance(
 
 def add_data_from_arrays(
     depth: ArrayLike,
+    uncertainty: ArrayLike,
     grid_properties: Dict[str, Number],
     data_file: S102File,
-    uncertainty: Optional[ArrayLike] = None,
     nodata_value: Optional[Number] = None,
     z_positive_down: bool = True,
 ) -> S102File:
     """
-    Insert depth (and optionally uncertainty) arrays into an S-102 dataset (DCF2),
+    Insert depth + uncertainty arrays into an S-102 v2.2.0 dataset (DCF2),
     and update the BathymetryCoverage instance geometry.
 
-    Parameters
-    ----------
-    depth : ArrayLike
-        2D numpy array with shape [ny, nx].
-    grid_properties : dict
+    depth, uncertainty:
+        2D numpy arrays with identical shape [ny, nx].
+
+    grid_properties:
         {
           "minx": westBound (x),
           "maxx": eastBound (x),
@@ -256,15 +255,13 @@ def add_data_from_arrays(
           "nx": number of columns,
           "ny": number of rows,
         }
-    data_file : S102File
-        The S102 file to populate.
-    uncertainty : ArrayLike, optional
-        2D numpy array with same shape as depth. If None, fills with nodata.
-    nodata_value : Number, optional
-        Value to use for missing data. Defaults to 1000000.0.
-    z_positive_down : bool
-        If False, depth values are negated.
     """
+    if depth.shape != uncertainty.shape:
+        raise S102Exception(
+            f"Depth and uncertainty arrays must have the same shape, "
+            f"got {depth.shape!r} and {uncertainty.shape!r}"
+        )
+
     ny, nx = depth.shape
     if int(grid_properties["nx"]) != nx or int(grid_properties["ny"]) != ny:
         raise S102Exception(
@@ -272,24 +269,16 @@ def add_data_from_arrays(
             f"({grid_properties['nx']}, {grid_properties['ny']}) vs {depth.shape}"
         )
 
-    if uncertainty is not None and depth.shape != uncertainty.shape:
-        raise S102Exception(
-            f"Depth and uncertainty arrays must have the same shape, "
-            f"got {depth.shape!r} and {uncertainty.shape!r}"
-        )
-
-    fill_value = numpy.float32(nodata_value if nodata_value is not None else 1000000.0)
-
     depth_arr = numpy.array(depth, dtype="float32", copy=True)
+    uncert_arr = numpy.array(uncertainty, dtype="float32", copy=True)
+
     if not z_positive_down:
         depth_arr *= -1.0
-    depth_arr = numpy.where(numpy.isnan(depth_arr), fill_value, depth_arr)
 
-    if uncertainty is not None:
-        uncert_arr = numpy.array(uncertainty, dtype="float32", copy=True)
-        uncert_arr = numpy.where(numpy.isnan(uncert_arr), fill_value, uncert_arr)
-    else:
-        uncert_arr = numpy.full(depth.shape, fill_value, dtype="float32")
+    if nodata_value is not None:
+        nodata = numpy.float32(nodata_value)
+        depth_arr = numpy.where(numpy.isnan(depth_arr), nodata, depth_arr)
+        uncert_arr = numpy.where(numpy.isnan(uncert_arr), nodata, uncert_arr)
 
     minx = float(grid_properties["minx"])
     maxx = float(grid_properties["maxx"])
