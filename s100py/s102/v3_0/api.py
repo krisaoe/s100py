@@ -2098,9 +2098,11 @@ class S102File(S100File):
         miny = _clean(min(corner_y - half_res_y, last_cell_y + half_res_y))
         maxy = _clean(max(corner_y - half_res_y, last_cell_y + half_res_y))
 
-        # Cell-centre origin for gridOrigin attributes (not edge-based)
-        origin_x = _clean(min(corner_x, last_cell_x))
-        origin_y = _clean(min(corner_y, last_cell_y))
+        # gridOrigin set to cell edge (same as instance bounds).
+        # With dataOffsetCode=5 (barycenter), the ECDIS adds half a
+        # spacing internally to arrive at the cell centre position.
+        origin_x = minx
+        origin_y = miny
 
         # now add the additional metadata
         root = self.root
