@@ -2122,12 +2122,6 @@ class S102File(S100File):
                 root.horizontal_crs = source_epsg
             else:
                 raise S102Exception(f'The provided EPSG code {source_epsg} is not within the S102 specified values.')
-        # Root bounds use cell-centre values (gridOrigin at SW/NE corners).
-        # Instance bounds use edge-to-edge (half cell outward from nodes).
-        # This matches the pattern used by reference S-102 datasets.
-        last_origin_x = _clean(max(corner_x, last_cell_x))
-        last_origin_y = _clean(max(corner_y, last_cell_y))
-
         srs = osr.SpatialReference()
         srs.ImportFromEPSG(int(root.horizontal_crs))
         if srs.IsProjected():
@@ -2135,12 +2129,13 @@ class S102File(S100File):
             wgs = osr.SpatialReference()
             wgs.ImportFromEPSG(4326)  # 4326 is WGS84 geodetic - and S102 specifies WGS84
             transform = osr.CoordinateTransformation(srs, wgs)
-            south_lat, west_lon = transform.TransformPoint(origin_x, origin_y)[:2]
-            north_lat, east_lon = transform.TransformPoint(last_origin_x, last_origin_y)[:2]
+            # mytransf = Transformer.from_crs(root.horizontal_crs, CRS.from_epsg(4326), always_xy=True)
+            south_lat, west_lon = transform.TransformPoint(minx, miny)[:2]
+            north_lat, east_lon = transform.TransformPoint(maxx, maxy)[:2]
         else:
             axes = ["Longitude", "Latitude"]  # ["Latitude", "Longitude"]  # row major instead of
-            south_lat, west_lon = origin_y, origin_x
-            north_lat, east_lon = last_origin_y, last_origin_x
+            south_lat, west_lon = miny, minx
+            north_lat, east_lon = maxy, maxx
 
         root.east_bound_longitude = east_lon
         root.west_bound_longitude = west_lon
