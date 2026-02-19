@@ -11,6 +11,12 @@ from typing import Union, Optional
 from ...s1xx import s1xx_sequence
 from .api import S111File, FILLVALUE_CURRENTS, FILLVALUE_UNCERTAINTY, S111Exception, VERTICAL_DATUM, VERTICAL_DATUM_REFERENCE
 
+COORD_PRECISION = 5
+
+
+def _clean(value):
+    return round(float(value), COORD_PRECISION)
+
 
 def _get_S111File(output_file):
     """ Small helper function to convert the output_file parameter into a S111File"""
@@ -338,10 +344,10 @@ def add_data_from_arrays(speed: s1xx_sequence, direction: s1xx_sequence, data_fi
         surface_current_feature_instance.start_sequence = "0,0"
         surface_current_feature.sequencing_rule_scan_direction = "longitude,latitude"
         surface_current_feature.sequencing_rule_type = 1
-        surface_current_feature_instance.grid_origin_longitude = grid_properties['minx']
-        surface_current_feature_instance.grid_origin_latitude = grid_properties['miny']
-        surface_current_feature_instance.grid_spacing_longitudinal = grid_properties['cellsize_x']
-        surface_current_feature_instance.grid_spacing_latitudinal = grid_properties['cellsize_y']
+        surface_current_feature_instance.grid_origin_longitude = _clean(grid_properties['minx'])
+        surface_current_feature_instance.grid_origin_latitude = _clean(grid_properties['miny'])
+        surface_current_feature_instance.grid_spacing_longitudinal = _clean(grid_properties['cellsize_x'])
+        surface_current_feature_instance.grid_spacing_latitudinal = _clean(grid_properties['cellsize_y'])
 
         surface_current_feature_instance.num_points_latitudinal = grid_properties['ny']
         surface_current_feature_instance.num_points_longitudinal = grid_properties['nx']
@@ -494,10 +500,10 @@ def update_metadata(data_file, grid_properties: dict, metadata: dict) -> S111Fil
 
         surface_current_feature_instance.num_grp = num_groups
 
-        root.east_bound_longitude = grid_properties["maxx"]
-        root.west_bound_longitude = grid_properties["minx"]
-        root.south_bound_latitude = grid_properties["miny"]
-        root.north_bound_latitude = grid_properties["maxy"]
+        root.west_bound_longitude = _clean(grid_properties["minx"])
+        root.east_bound_longitude = _clean(grid_properties["maxx"])
+        root.south_bound_latitude = _clean(grid_properties["miny"])
+        root.north_bound_latitude = _clean(grid_properties["maxy"])
 
     except KeyError as e:
         raise S111Exception(f"KeyError: S-111 attribute {e} not found in the metadata dictionary")

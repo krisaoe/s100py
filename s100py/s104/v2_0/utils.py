@@ -10,6 +10,12 @@ import numpy
 from ...s1xx import s1xx_sequence
 from .api import S104File, FILLVALUE_HEIGHT, FILLVALUE_TREND, FILLVALUE_UNCERTAINTY, S104Exception
 
+COORD_PRECISION = 5
+
+
+def _clean(value):
+    return round(float(value), COORD_PRECISION)
+
 
 def _get_S104File(output_file):
     """
@@ -352,10 +358,10 @@ def add_data_from_arrays(height: s1xx_sequence, trend, data_file, grid_propertie
         water_level_feature_instance.start_sequence = "0,0"
         water_level_feature.sequencing_rule_scan_direction = "longitude,latitude"
         water_level_feature.sequencing_rule_type = 1
-        water_level_feature_instance.grid_origin_longitude = grid_properties['minx']
-        water_level_feature_instance.grid_origin_latitude = grid_properties['miny']
-        water_level_feature_instance.grid_spacing_longitudinal = grid_properties['cellsize_x']
-        water_level_feature_instance.grid_spacing_latitudinal = grid_properties['cellsize_y']
+        water_level_feature_instance.grid_origin_longitude = _clean(grid_properties['minx'])
+        water_level_feature_instance.grid_origin_latitude = _clean(grid_properties['miny'])
+        water_level_feature_instance.grid_spacing_longitudinal = _clean(grid_properties['cellsize_x'])
+        water_level_feature_instance.grid_spacing_latitudinal = _clean(grid_properties['cellsize_y'])
 
         water_level_feature_instance.num_points_latitudinal = grid_properties['ny']
         water_level_feature_instance.num_points_longitudinal = grid_properties['nx']
@@ -480,10 +486,10 @@ def update_metadata(data_file, grid_properties: dict, metadata: dict) -> S104Fil
         water_level_feature_instance.number_of_times = num_groups
         water_level_feature_instance.time_record_interval = time_record_interval
 
-        root.east_bound_longitude = grid_properties["maxx"]
-        root.west_bound_longitude = grid_properties["minx"]
-        root.south_bound_latitude = grid_properties["miny"]
-        root.north_bound_latitude = grid_properties["maxy"]
+        root.west_bound_longitude = _clean(grid_properties["minx"])
+        root.east_bound_longitude = _clean(grid_properties["maxx"])
+        root.south_bound_latitude = _clean(grid_properties["miny"])
+        root.north_bound_latitude = _clean(grid_properties["maxy"])
 
     except KeyError as e:
         raise S104Exception(f"KeyError: S-104 attribute {e} not found in the metadata dictionary")
