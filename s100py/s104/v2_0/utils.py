@@ -486,10 +486,14 @@ def update_metadata(data_file, grid_properties: dict, metadata: dict) -> S104Fil
         water_level_feature_instance.number_of_times = num_groups
         water_level_feature_instance.time_record_interval = time_record_interval
 
-        root.west_bound_longitude = _clean(grid_properties["minx"])
-        root.east_bound_longitude = _clean(grid_properties["maxx"])
-        root.south_bound_latitude = _clean(grid_properties["miny"])
-        root.north_bound_latitude = _clean(grid_properties["maxy"])
+        # Bounding box uses edge-to-edge (half cell outward from node positions)
+        # matching the convention used by S-102 and reference S-104 datasets
+        half_x = grid_properties["cellsize_x"] / 2
+        half_y = grid_properties["cellsize_y"] / 2
+        root.west_bound_longitude = _clean(grid_properties["minx"] - half_x)
+        root.east_bound_longitude = _clean(grid_properties["maxx"] + half_x)
+        root.south_bound_latitude = _clean(grid_properties["miny"] - half_y)
+        root.north_bound_latitude = _clean(grid_properties["maxy"] + half_y)
 
     except KeyError as e:
         raise S104Exception(f"KeyError: S-104 attribute {e} not found in the metadata dictionary")
