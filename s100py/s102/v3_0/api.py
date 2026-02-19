@@ -817,10 +817,6 @@ class QualityFeatureInstance(FeatureInstanceDCF9, S102_VerticalDatumAttributesCo
     def quality_group(self, val: S102MetadataListBase):
         self._attributes[self.__quality_group_hdf_name__] = val
 
-    @property
-    def __east_bound_longitude_type__(self):
-        return numpy.float32
-
     def data_offset_code_create(self):
         self.data_offset_code = 5
 
@@ -2080,14 +2076,25 @@ class S102File(S100File):
         rows, cols = depth_grid.shape
         corner_x, corner_y = metadata['origin']
 
-        # S-102 is cell based, so distance to far corner is res * n
-        opposite_corner_x = corner_x + res_x * cols
-        opposite_corner_y = corner_y + res_y * rows
+        # S-102 is cell based with dataOffsetCode=5 (barycenter).
+        # Origin is the centre of the first cell.
+        # Last cell centre is at origin + res * (n - 1).
+        # Bounding box extends from the edge of the first cell to the
+        # edge of the last cell (edge-to-edge).
+        half_res_x = res_x / 2
+        half_res_y = res_y / 2
 
-        minx = min((corner_x, opposite_corner_x))
-        maxx = max((corner_x, opposite_corner_x))
-        miny = min((corner_y, opposite_corner_y))
-        maxy = max((corner_y, opposite_corner_y))
+        last_cell_x = corner_x + res_x * (cols - 1)
+        last_cell_y = corner_y + res_y * (rows - 1)
+
+        minx = min(corner_x - half_res_x, last_cell_x + half_res_x)
+        maxx = max(corner_x - half_res_x, last_cell_x + half_res_x)
+        miny = min(corner_y - half_res_y, last_cell_y + half_res_y)
+        maxy = max(corner_y - half_res_y, last_cell_y + half_res_y)
+
+        # Cell-centre origin for gridOrigin attributes (not edge-based)
+        origin_x = min(corner_x, last_cell_x)
+        origin_y = min(corner_y, last_cell_y)
 
         # now add the additional metadata
         root = self.root
@@ -2145,8 +2152,9 @@ class S102File(S100File):
             instance.north_bound_latitude = maxy
 
             # S102 says this is in the CRS of the data (projected) while S100 says units of Arc Degrees (lat/lon)
-            instance.grid_origin_longitude = minx
-            instance.grid_origin_latitude = miny
+            # gridOrigin is the cell centre of the SW corner cell, not the bounding box edge
+            instance.grid_origin_longitude = origin_x
+            instance.grid_origin_latitude = origin_y
             instance.grid_spacing_longitudinal = abs(res_x)  # we adjust for negative resolution in the from_arrays
             instance.grid_spacing_latitudinal = abs(res_y)
 
